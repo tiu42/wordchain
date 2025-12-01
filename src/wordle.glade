@@ -701,7 +701,7 @@
                 <property name="y">154</property>
               </packing>
             </child>
-            <child>
+            <!-- <child>
               <object class="GtkButton" id="view_history_button">
                 <property name="label" translatable="yes">View history</property>
                 <property name="width-request">200</property>
@@ -714,7 +714,7 @@
                 <property name="x">250</property>
                 <property name="y">230</property>
               </packing>
-            </child>
+            </child> -->
             <child>
               <object class="GtkScrolledWindow">
                 <property name="width-request">460</property>

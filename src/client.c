@@ -829,32 +829,30 @@ void handle_challange_response(Message *msg)
 
 int parse_game_history_list(const char *payload, GameHistory *game_history_list, int max_games)
 {
-  // Duplicate payload to safely tokenize
   char *payload_copy = strdup(payload);
   if (!payload_copy)
-  {
-    g_print("Memory allocation failed for payload copy.\n");
     return 0;
-  }
 
   int game_count = 0;
-  char *line = strtok(payload_copy, "\n"); // Each line represents a game history
+  char *line = strtok(payload_copy, "\n");
 
   while (line != NULL && game_count < max_games)
   {
     GameHistory *current = &game_history_list[game_count];
-    memset(current, 0, sizeof(GameHistory)); // Clear memory for safety
+    memset(current, 0, sizeof(GameHistory));
 
-    // Parse the game history line
-    sscanf(line, "Game ID: %19s | %49s vs %49s | Winner: %49s | Score: %d-%d",
-           current->game_id, current->player1, current->player2,
-           current->winner, &current->player1_score, &current->player2_score);
+    // --- SỬA ĐỔI FORMAT PARSE ---
+    // Đọc: GameID|Player1|Player2|Winner
+    if (sscanf(line, "%19[^|]|%49[^|]|%49[^|]|%49s",
+               current->game_id, current->player1, current->player2, current->winner) == 4)
+    {
+      game_count++;
+    }
 
-    game_count++;
-    line = strtok(NULL, "\n"); // Get the next line
+    line = strtok(NULL, "\n");
   }
 
-  free(payload_copy); // Free the duplicated payload
+  free(payload_copy);
   return game_count;
 }
 
@@ -862,49 +860,61 @@ void update_history_list_box(GameHistory *game_history_list, int game_count)
 {
   GtkListBox *list_box = GTK_LIST_BOX(gtk_builder_get_object(builder, "history_list_box"));
   if (!list_box)
-  {
-    g_print("Cannot find history list box\n");
     return;
-  }
 
-  // Remove existing rows from the list box
+  // Clear old rows
   GtkListBoxRow *row;
   while ((row = gtk_list_box_get_row_at_index(list_box, 0)) != NULL)
   {
     gtk_container_remove(GTK_CONTAINER(list_box), GTK_WIDGET(row));
   }
 
-  // Add new rows for each game in the history list
+  // Add new rows
   for (int i = 0; i < game_count; i++)
   {
-    // Create a horizontal box container for each row
     GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_widget_set_margin_start(row_box, 5);
-    gtk_widget_set_margin_end(row_box, 5);
+    gtk_widget_set_margin_start(row_box, 10);
+    gtk_widget_set_margin_end(row_box, 10);
     gtk_widget_set_margin_top(row_box, 5);
     gtk_widget_set_margin_bottom(row_box, 5);
 
-    // Format game history information
+    // --- SỬA ĐỔI FORMAT HIỂN THỊ ---
+    // Format: "player1 vs player2 | winner: winner_name" (Kèm GameID ẩn để xử lý click)
     char game_info[256];
-    snprintf(game_info, sizeof(game_info), "Game ID: %s | %s vs %s | Winner: %s | Score: %d-%d",
-             game_history_list[i].game_id, game_history_list[i].player1, game_history_list[i].player2,
-             game_history_list[i].winner, game_history_list[i].player1_score, game_history_list[i].player2_score);
+    snprintf(game_info, sizeof(game_info), "%s vs %s | Winner: %s",
+             game_history_list[i].player1,
+             game_history_list[i].player2,
+             game_history_list[i].winner);
 
-    // Create a label for the game history information
+    // Label hiển thị
     GtkWidget *label = gtk_label_new(game_info);
     gtk_widget_set_halign(label, GTK_ALIGN_START);
+
+    // Label ẩn chứa GameID (Dùng để gửi request xem chi tiết khi click)
+    // Hoặc có thể gán data vào row, nhưng cách đơn giản là nối chuỗi vào label rồi parse lại
+    // Nhưng yêu cầu của bạn là hiển thị gọn, nên ta sẽ dùng g_object_set_data
+
     gtk_box_pack_start(GTK_BOX(row_box), label, TRUE, TRUE, 0);
 
-    // Create a list box row and add the container
-    GtkWidget *row = gtk_list_box_row_new();
-    gtk_container_add(GTK_CONTAINER(row), row_box);
-    gtk_list_box_insert(list_box, row, -1);
+    GtkWidget *list_row = gtk_list_box_row_new();
+    gtk_container_add(GTK_CONTAINER(list_row), row_box);
 
-    // Show all widgets in the row
-    gtk_widget_show_all(row);
+    // Lưu GameID vào data của row để dùng lại khi click nút "View History"
+    // Lưu ý: Cần sửa cả hàm on_view_history_clicked để lấy data này
+    // Tuy nhiên để đơn giản và tương thích code cũ (đang parse từ label text),
+    // ta sẽ giữ format cũ trong hàm hiển thị nhưng CHỈNH SỬA CHUỖI HIỂN THỊ.
+
+    // --- CÁCH ĐƠN GIẢN NHẤT ĐỂ TƯƠNG THÍCH LOGIC CŨ ---
+    // Code cũ của bạn parse: "Game ID: %19s" từ label.
+    // Nên ta buộc phải để GameID trong label nhưng có thể để ở cuối hoặc làm mờ.
+    // Tuy nhiên bạn yêu cầu CHỈ hiện tên và winner.
+
+    // Vậy ta sẽ lưu GameID vào thuộc tính widget name của label
+    gtk_widget_set_name(label, game_history_list[i].game_id);
+
+    gtk_list_box_insert(list_box, list_row, -1);
+    gtk_widget_show_all(list_row);
   }
-
-  // Refresh the list box to display the updated rows
   gtk_widget_show_all(GTK_WIDGET(list_box));
 }
 
@@ -936,17 +946,10 @@ void handle_history_list_response(Message *msg)
 
 void on_view_history_clicked(GtkButton *button, gpointer user_data)
 {
-  g_print("View history clicked\n");
-
-  // Get the history_list_box widget
   GtkListBox *list_box = GTK_LIST_BOX(gtk_builder_get_object(builder, "history_list_box"));
   if (!list_box)
-  {
-    g_print("Cannot find history list box\n");
     return;
-  }
 
-  // Get the selected row
   GtkListBoxRow *selected_row = gtk_list_box_get_selected_row(list_box);
   if (!selected_row)
   {
@@ -954,49 +957,28 @@ void on_view_history_clicked(GtkButton *button, gpointer user_data)
     return;
   }
 
-  // Get the box inside the row
   GtkWidget *box = gtk_bin_get_child(GTK_BIN(selected_row));
-  if (!GTK_IS_BOX(box))
-  {
-    g_print("Selected row does not contain a GtkBox\n");
-    return;
-  }
-
-  // Get the label inside the box
   GList *children = gtk_container_get_children(GTK_CONTAINER(box));
   if (!children)
-  {
-    g_print("No children in the selected row's box\n");
     return;
-  }
 
-  GtkWidget *label = GTK_WIDGET(children->data); // First child is the label
+  GtkWidget *label = GTK_WIDGET(children->data);
   g_list_free(children);
 
-  if (!GTK_IS_LABEL(label))
+  // --- SỬA ĐỔI: LẤY GAME ID TỪ WIDGET NAME ---
+  const gchar *game_id = gtk_widget_get_name(label);
+
+  if (!game_id || strlen(game_id) == 0)
   {
-    g_print("First child of box is not a label\n");
+    g_print("Error: Could not retrieve Game ID\n");
     return;
   }
 
-  const gchar *label_text = gtk_label_get_text(GTK_LABEL(label));
-  if (!label_text)
-  {
-    g_print("Label text is null\n");
-    return;
-  }
-
-  // Extract the game ID from the label text
-  char game_id[20] = {0};
-  sscanf(label_text, "Game ID: %19s", game_id);
-
-  // Send GAME_DETAIL_REQUEST to the server
   Message message;
   message.message_type = GAME_DETAIL_REQUEST;
   snprintf(message.payload, sizeof(message.payload), "%s", game_id);
 
-  queue_push(&send_queue, &message); // Push the request to the send queue
-  g_print("Game detail request sent for Game ID: %s\n", game_id);
+  queue_push(&send_queue, &message);
 }
 
 void on_send_challenge_clicked(GtkButton *button, gpointer user_data)
@@ -1067,7 +1049,7 @@ void on_send_rechallenge_clicked(GtkButton *button, gpointer user_data)
 {
   g_print("Send rechallenge clicked\n");
 
-  // Get the history_list_box widget
+  // 1. Lấy widget ListBox chứa lịch sử
   GtkListBox *list_box = GTK_LIST_BOX(gtk_builder_get_object(builder, "history_list_box"));
   if (!list_box)
   {
@@ -1075,15 +1057,15 @@ void on_send_rechallenge_clicked(GtkButton *button, gpointer user_data)
     return;
   }
 
-  // Get the selected row
+  // 2. Lấy dòng (row) đang được chọn
   GtkListBoxRow *selected_row = gtk_list_box_get_selected_row(list_box);
   if (!selected_row)
   {
-    show_error_dialog("Please select a game first");
+    show_error_dialog("Please select a game history to rechallenge.");
     return;
   }
 
-  // Get the child box inside the selected row
+  // 3. Lấy widget con bên trong row (GtkBox)
   GtkWidget *box = gtk_bin_get_child(GTK_BIN(selected_row));
   if (!GTK_IS_BOX(box))
   {
@@ -1091,7 +1073,7 @@ void on_send_rechallenge_clicked(GtkButton *button, gpointer user_data)
     return;
   }
 
-  // Get the first child (label) inside the box
+  // 4. Lấy danh sách con của Box để tìm Label
   GList *children = gtk_container_get_children(GTK_CONTAINER(box));
   if (!children)
   {
@@ -1099,8 +1081,9 @@ void on_send_rechallenge_clicked(GtkButton *button, gpointer user_data)
     return;
   }
 
+  // Phần tử đầu tiên trong Box chính là Label hiển thị thông tin
   GtkWidget *label = GTK_WIDGET(children->data);
-  g_list_free(children);
+  g_list_free(children); // Giải phóng danh sách liên kết
 
   if (!GTK_IS_LABEL(label))
   {
@@ -1108,6 +1091,7 @@ void on_send_rechallenge_clicked(GtkButton *button, gpointer user_data)
     return;
   }
 
+  // 5. Lấy nội dung text từ Label
   const gchar *label_text = gtk_label_get_text(GTK_LABEL(label));
   if (!label_text || strlen(label_text) == 0)
   {
@@ -1115,50 +1099,58 @@ void on_send_rechallenge_clicked(GtkButton *button, gpointer user_data)
     return;
   }
 
-  // Debug: Print the label text
   g_print("Selected Label Text: %s\n", label_text);
 
-  // Extract the opponent's username
+  // 6. Phân tích chuỗi để lấy tên 2 người chơi
+  // Format mong đợi: "player1 vs player2 | Winner: ..."
   char player1[50] = {0};
   char player2[50] = {0};
 
-  if (sscanf(label_text, "Game ID: %*[^|] | %49[^ ] vs %49[^ ] | %*s", player1, player2) != 2)
+  // %49[^ ] có nghĩa là đọc tối đa 49 ký tự cho đến khi gặp khoảng trắng
+  if (sscanf(label_text, "%49[^ ] vs %49[^ ] |", player1, player2) != 2)
   {
-    show_error_dialog("Failed to extract player names from selected game.");
+    show_error_dialog("Failed to extract player names. Format mismatch.");
     return;
   }
 
-  // Determine opponent name based on current client_name
+  // 7. Xác định ai là đối thủ dựa trên tên của mình (client_name)
   char opponent_name[50] = {0};
+
   if (strcmp(client_name, player1) == 0)
   {
-    strncpy(opponent_name, player2, sizeof(opponent_name) - 1);
+    // Nếu mình là P1 thì đối thủ là P2
+    strncpy(opponent_name, player2, 49);
   }
   else if (strcmp(client_name, player2) == 0)
   {
-    strncpy(opponent_name, player1, sizeof(opponent_name) - 1);
+    // Nếu mình là P2 thì đối thủ là P1
+    strncpy(opponent_name, player1, 49);
   }
   else
   {
+    // Tên mình không có trong trận đấu này
     show_error_dialog("You were not a participant in the selected game.");
     return;
   }
 
-  // Validate that the opponent is not the client itself
+  // Kiểm tra an toàn: Không được thách đấu chính mình (dù logic trên đã loại trừ)
   if (strcmp(opponent_name, client_name) == 0)
   {
     show_error_dialog("Cannot challenge yourself!");
     return;
   }
 
-  // Send rechallenge request
+  // 8. Gửi yêu cầu thách đấu (CHALLANGE_REQUEST)
   Message msg;
+  memset(&msg, 0, sizeof(Message));
   msg.message_type = CHALLANGE_REQUEST;
+
+  // Payload: CHALLANGE_REQUEST|NguoiGui|NguoiNhan
   snprintf(msg.payload, sizeof(msg.payload), "CHALLANGE_REQUEST|%s|%s", client_name, opponent_name);
 
   queue_push(&send_queue, &msg);
 
-  // Show confirmation dialog
+  // 9. Hiển thị thông báo
   char *dialog_message = g_strdup_printf("Rechallenge sent to %s", opponent_name);
   show_dialog(dialog_message);
   g_free(dialog_message);

@@ -967,17 +967,25 @@ void handle_message(int client_sock, Message *message)
 
       for (int i = 0; i < history_count; i++)
       {
+        // --- SỬA ĐỔI FORMAT GỬI VỀ ---
+        // Format mới: GameID|Player1|Player2|Winner
         snprintf(buffer, sizeof(buffer),
-                 "Game ID: %s | %s vs %s | Winner: %s | Score: %d-%d\n",
-                 history_list[i].game_id, history_list[i].player1, history_list[i].player2,
-                 history_list[i].winner, history_list[i].player1_score, history_list[i].player2_score);
+                 "%s|%s|%s|%s\n",
+                 history_list[i].game_id,
+                 history_list[i].player1,
+                 history_list[i].player2,
+                 history_list[i].winner);
 
         strncat(response, buffer, sizeof(response) - strlen(response) - 1);
       }
 
-      if (strlen(response) > 1)
+      if (strlen(response) > 0)
       {
         response[strlen(response) - 1] = '\0'; // Remove trailing newline
+      }
+      else
+      {
+        strcpy(response, "No history found");
       }
 
       strcpy(message->payload, response);
