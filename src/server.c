@@ -26,13 +26,13 @@ GameSession game_sessions[MAX_SESSIONS];
 PlayerInfo player_list[MAX_PLAYERS]; // Array to store player information
 int player_count = 0;                // Current number of players
 
-// Add word lists and counts
-char valid_solutions[MAX_WORDS][WORD_LENGTH + 1];
-char valid_guesses[MAX_WORDS][WORD_LENGTH + 1];
-int solution_count = 0;
-int guess_count = 0;
+// --- SỬA ĐỔI: CHỈ DÙNG 1 DANH SÁCH TỪ ---
+char valid_words[MAX_WORDS][WORD_LENGTH + 1];
+int word_count = 0;
 
 /****************************Word Function*******************************/
+
+// Hàm xáo trộn (dùng cho gợi ý nếu cần)
 void scramble_string(char *str)
 {
   int n = strlen(str);
@@ -45,25 +45,28 @@ void scramble_string(char *str)
   }
 }
 
+// Lấy từ ngẫu nhiên từ danh sách duy nhất
 char *get_random_word()
 {
-  int index = rand() % solution_count;
-  return valid_solutions[index];
+  if (word_count == 0)
+    return "apple"; // Fallback nếu chưa load
+  int index = rand() % word_count;
+  return valid_words[index];
 }
 
-/* Thay thế hàm check_guess cũ trong server.c */
 void check_guess(const char *guess, const char *target, char *result)
 {
   if (strcmp(guess, target) == 0)
   {
-    strcpy(result, "CORRECT"); // Đúng hoàn toàn
+    strcpy(result, "CORRECT");
   }
   else
   {
-    strcpy(result, "WRONG"); // Sai
+    strcpy(result, "WRONG");
   }
 }
 
+// Hàm load từ chung
 int load_words(const char *filename, char words[][WORD_LENGTH + 1])
 {
   FILE *file = fopen(filename, "r");
@@ -83,37 +86,32 @@ int load_words(const char *filename, char words[][WORD_LENGTH + 1])
   return count;
 }
 
+// SỬA ĐỔI: Chỉ load valid_words.txt
 void init_wordle()
 {
   srand(time(NULL));
-  solution_count = load_words("valid_solutions.txt", valid_solutions);
-  guess_count = load_words("valid_guesses.txt", valid_guesses);
-  printf("Loaded %d solutions and %d guesses.\n", solution_count, guess_count);
 
-  if (solution_count == -1 || guess_count == -1)
+  word_count = load_words("valid_words.txt", valid_words);
+  printf("Loaded %d words from valid_words.txt\n", word_count);
+
+  if (word_count == -1 || word_count == 0)
   {
-    printf("Failed to load word lists.\n");
+    printf("Failed to load word list or list is empty.\n");
     exit(1);
   }
 }
 
+// SỬA ĐỔI: Chỉ kiểm tra trong valid_words
 int is_valid_guess(const char *guess)
 {
-  for (int i = 0; i < guess_count; i++)
+  for (int i = 0; i < word_count; i++)
   {
-    if (strcmp(guess, valid_guesses[i]) == 0)
+    if (strcmp(guess, valid_words[i]) == 0)
     {
-      return 1;
+      return 1; // Hợp lệ
     }
   }
-  for (int i = 0; i < solution_count; i++)
-  {
-    if (strcmp(guess, valid_solutions[i]) == 0)
-    {
-      return 1;
-    }
-  }
-  return 0;
+  return 0; // Không tìm thấy
 }
 /***************************************************************************/
 
@@ -142,14 +140,8 @@ void get_time_as_string(char *buffer, size_t buffer_size)
 {
   time_t raw_time;
   struct tm *time_info;
-
-  // Get current time
   time(&raw_time);
-
-  // Convert time to `tm` structure
   time_info = localtime(&raw_time);
-
-  // Format time as string
   strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", time_info);
 }
 
@@ -161,29 +153,23 @@ void generate_game_id(char *game_id, size_t size)
 
 int add_player(const char *player_name, int player_sock)
 {
-  // Check if the array is full
   if (player_count >= MAX_PLAYERS)
   {
     printf("Player list is full!\n");
-    return -1; // Player list is full
+    return -1;
   }
-
-  // Check if the player already exists
   for (int i = 0; i < player_count; i++)
   {
     if (strcmp(player_list[i].player_name, player_name) == 0)
     {
       printf("Player %s already exists!\n", player_name);
-      return -1; // Player already exists
+      return -1;
     }
   }
-
-  // Add the new player to the array
   strcpy(player_list[player_count].player_name, player_name);
   player_list[player_count].player_sock = player_sock;
   player_count++;
-
-  return 0; // Successfully added
+  return 0;
 }
 
 int get_player_sock(const char *player_name)
@@ -192,15 +178,13 @@ int get_player_sock(const char *player_name)
   {
     if (strcmp(player_list[i].player_name, player_name) == 0)
     {
-      return player_list[i].player_sock; // Return the player's socket
+      return player_list[i].player_sock;
     }
   }
-
   printf("Player %s not found!\n", player_name);
-  return -1; // Player not found
+  return -1;
 }
 
-// Create a new game session with Player1 and Player2
 int create_game_session(const char *player1_name, const char *player2_name)
 {
   for (int i = 0; i < MAX_SESSIONS; i++)
@@ -222,7 +206,7 @@ int create_game_session(const char *player1_name, const char *player2_name)
       game_sessions[i].player2_score = 0;
 
       game_sessions[i].game_active = 1;
-      game_sessions[i].current_attempts = 0; // Đếm số lượt đi
+      game_sessions[i].current_attempts = 0;
       get_time_as_string(game_sessions[i].start_time, sizeof(game_sessions[i].start_time));
       return i;
     }
@@ -232,75 +216,39 @@ int create_game_session(const char *player1_name, const char *player2_name)
 
 void clear_game_session(int session_id)
 {
-  GameSession *session = &game_sessions[session_id];
-
-  // Reset player information
-  memset(session->player1_name, 0, sizeof(session->player1_name));
-  memset(session->player2_name, 0, sizeof(session->player2_name));
-  memset(session->last_word, 0, sizeof(session->last_word));
-
-  // Reset game state
-  session->current_player = 0;
-  session->game_active = 0;
-  session->current_attempts = 0;
-  session->player1_score = 0;
-  session->player2_score = 0;
-
-  // Clear turns history
-  memset(session->turns, 0, sizeof(session->turns));
-  memset(session->start_time, 0, sizeof(session->start_time));
-  memset(session->end_time, 0, sizeof(session->end_time));
-
+  // Xóa sạch session
+  memset(&game_sessions[session_id], 0, sizeof(GameSession));
   printf("Cleared game session %d\n", session_id);
 }
 
-// Function to find an existing game with Player1 and Player2
 int find_existing_game(const char *player1_name, const char *player2_name)
 {
   for (int i = 0; i < MAX_SESSIONS; i++)
   {
     if (game_sessions[i].game_active)
     {
-      // Check if Player1 and Player2 are already in a game
       if ((strcmp(game_sessions[i].player1_name, player1_name) == 0 &&
            strcmp(game_sessions[i].player2_name, player2_name) == 0) ||
           (strcmp(game_sessions[i].player1_name, player2_name) == 0 &&
            strcmp(game_sessions[i].player2_name, player1_name) == 0))
       {
-        return i; // Return the game session ID
+        return i;
       }
     }
   }
-  return -1; // Game not found
+  return -1;
 }
 
-// Function to find a user by username
 User *find_user_by_username(User users[], int size, const char *username)
 {
   for (int i = 0; i < size; i++)
   {
     if (strncmp(users[i].username, username, 50) == 0)
     {
-      return &users[i]; // Return pointer to the found user
+      return &users[i];
     }
   }
-  return NULL; // Return NULL if no user is found
-}
-
-void send_turn_update(GameSession *session)
-{
-  Message message;
-  message.message_type = GAME_TURN;
-
-  // Create a message about the current turn
-  sprintf(message.payload, "%d", session->current_player);
-  printf("Sending turn update to %s and %s: current turn %d\n",
-         session->player1_name, session->player2_name, session->current_player);
-  message.status = SUCCESS;
-
-  // Send the turn update to both players
-  send(get_player_sock(session->player1_name), &message, sizeof(Message), 0);
-  send(get_player_sock(session->player2_name), &message, sizeof(Message), 0);
+  return NULL;
 }
 
 void send_score_update(GameSession *session)
@@ -319,7 +267,6 @@ void handle_client_disconnect(int client_sock)
   char disconnected_player[50];
   int player_index = -1;
 
-  // Find the disconnected player
   for (int i = 0; i < player_count; i++)
   {
     if (player_list[i].player_sock == client_sock)
@@ -336,14 +283,12 @@ void handle_client_disconnect(int client_sock)
     return;
   }
 
-  // Remove the player from the player list
   for (int i = player_index; i < player_count - 1; i++)
   {
     player_list[i] = player_list[i + 1];
   }
   player_count--;
 
-  // Check if the player was in an active game session
   for (int i = 0; i < MAX_SESSIONS; i++)
   {
     GameSession *session = &game_sessions[i];
@@ -351,19 +296,16 @@ void handle_client_disconnect(int client_sock)
         (strcmp(session->player1_name, disconnected_player) == 0 ||
          strcmp(session->player2_name, disconnected_player) == 0))
     {
-
-      // Determine the opponent
       const char *opponent = strcmp(session->player1_name, disconnected_player) == 0 ? session->player2_name : session->player1_name;
       int opponent_sock = get_player_sock(opponent);
 
-      // Notify the opponent that they win
       Message message;
       message.message_type = GAME_END;
       message.status = SUCCESS;
-      sprintf(message.payload, "%s", disconnected_player);
+      sprintf(message.payload, "%s", disconnected_player); // Thông báo đối thủ out
       send(opponent_sock, &message, sizeof(Message), 0);
 
-      // Save game history
+      // Lưu lịch sử (đối thủ out thì người còn lại thắng)
       GameHistory game_history;
       strcpy(game_history.game_id, session->game_id);
       strcpy(game_history.player1, session->player1_name);
@@ -373,41 +315,23 @@ void handle_client_disconnect(int client_sock)
       game_history.player2_score = session->player2_score;
 
       if (strcmp(disconnected_player, session->player1_name) == 0)
-      {
         strcpy(game_history.winner, session->player2_name);
-      }
       else
-      {
         strcpy(game_history.winner, session->player1_name);
-      }
 
       strcpy(game_history.start_time, session->start_time);
       strcpy(game_history.end_time, session->end_time);
 
-      // Copy the turns from GameSession to GameHistory
       for (int j = 0; j < MAX_ATTEMPTS; j++)
       {
         if (strlen(session->turns[j].guess) == 0)
-        {
           break;
-        }
         strcpy(game_history.moves[j].player_name, session->turns[j].player_name);
         strcpy(game_history.moves[j].guess, session->turns[j].guess);
         strcpy(game_history.moves[j].result, session->turns[j].result);
       }
 
-      // Save game history and moves to the database
-      int rc = save_game_history(db, &game_history);
-      if (rc != SQLITE_OK)
-      {
-        printf("Failed to save game history to the database: %d\n", rc);
-      }
-      else
-      {
-        printf("Game history saved successfully.\n");
-      }
-
-      // Clear the game session
+      save_game_history(db, &game_history);
       clear_game_session(i);
       break;
     }
@@ -420,14 +344,12 @@ void handle_client_disconnect(int client_sock)
 
 /*****************************INIT SERVER*************************************/
 
-// Signal handler to handle interruptions (SIGINT)
 void signal_handler(int sig)
 {
   got_signal = 1;
   printf("Caught signal %d\n", sig);
 }
 
-// Setup the signal handler for SIGINT
 void setup_signal_handler()
 {
   struct sigaction sa;
@@ -437,17 +359,8 @@ void setup_signal_handler()
   sigaction(SIGINT, &sa, NULL);
 }
 
-void init_game_sessions()
-{
-  for (int i = 0; i < MAX_SESSIONS; i++)
-  {
-    game_sessions[i].game_active = 0;
-  }
-}
-
 int initialize_server(int *server_sock, struct sockaddr_in *server_addr)
 {
-  // Create the server socket
   if ((*server_sock = socket(AF_INET, SOCK_STREAM, 0)) == 0)
   {
     perror("Socket failed");
@@ -458,14 +371,12 @@ int initialize_server(int *server_sock, struct sockaddr_in *server_addr)
   server_addr->sin_addr.s_addr = INADDR_ANY;
   server_addr->sin_port = htons(PORT);
 
-  // Bind the socket to the specified IP address and port
   if (bind(*server_sock, (struct sockaddr *)server_addr, sizeof(*server_addr)) < 0)
   {
     perror("Bind failed");
     exit(EXIT_FAILURE);
   }
 
-  // Start listening for incoming client connections
   if (listen(*server_sock, 30) < 0)
   {
     perror("Listen failed");
@@ -490,23 +401,15 @@ int main()
 
   int rc = open_database();
   if (rc)
-  {
     return 1;
-  }
 
-  // Seed the users
-  // seed_users(users, &size);
   init_wordle();
-
-  // Set up the signal handler
   setup_signal_handler();
 
-  // Block SIGINT signal to handle it later
   sigemptyset(&block_mask);
   sigaddset(&block_mask, SIGINT);
   sigprocmask(SIG_BLOCK, &block_mask, &orig_mask);
 
-  // Initialize server socket and bind to address
   initialize_server(&server_sock, &server_addr);
 
   while (1)
@@ -515,7 +418,6 @@ int main()
     FD_SET(server_sock, &readfds);
     int max_sd = server_sock;
 
-    // Add client sockets to the read set
     for (int i = 0; i < MAX_CLIENTS; i++)
     {
       int sock = client_socks[i];
@@ -525,18 +427,13 @@ int main()
         max_sd = sock;
     }
 
-    // Wait for activity on any of the sockets
     int ready = pselect(max_sd + 1, &readfds, NULL, NULL, NULL, &orig_mask);
     if (ready == -1)
     {
       if (errno == EINTR)
       {
-        printf("pselect() interrupted by signal.\n");
         if (got_signal)
-        {
-          printf("Received SIGINT, shutting down server.\n");
-          break; // Exit the loop when SIGINT is received
-        }
+          break;
         continue;
       }
       else
@@ -546,7 +443,6 @@ int main()
       }
     }
 
-    // Check if there's a new incoming connection
     if (FD_ISSET(server_sock, &readfds))
     {
       if ((new_sock = accept(server_sock, (struct sockaddr *)&client_addr, &addr_len)) < 0)
@@ -554,9 +450,6 @@ int main()
         perror("Accept failed");
         continue;
       }
-      printf("New connection, socket fd is %d\n", new_sock);
-
-      // Add the new socket to the client sockets array
       for (int i = 0; i < MAX_CLIENTS; i++)
       {
         if (client_socks[i] == 0)
@@ -567,7 +460,6 @@ int main()
       }
     }
 
-    // Handle messages from connected clients
     for (int i = 0; i < MAX_CLIENTS; i++)
     {
       int sock = client_socks[i];
@@ -578,27 +470,20 @@ int main()
         if (read_size == 0)
         {
           handle_client_disconnect(sock);
-          // Client disconnected
           close(sock);
           client_socks[i] = 0;
         }
         else
         {
-          // Process the received message
           handle_message(sock, &message);
         }
       }
     }
 
-    // Check if a signal was received after each pselect call
     if (got_signal)
-    {
-      printf("Received SIGINT, shutting down server.\n");
       break;
-    }
   }
 
-  // Close the database connection and the server socket before exiting
   close_database();
   close(server_sock);
   printf("Server stopped.\n");

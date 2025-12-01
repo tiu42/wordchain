@@ -425,23 +425,23 @@ void handle_game_turn_response(Message *msg)
 
 void handle_game_guess_response(Message *msg)
 {
-  // Xử lý Hết giờ (Do server báo về)
+  // Handle Timeout (Reported by server)
   if (strncmp(msg->payload, "TIMEOUT_LOSE", 12) == 0)
   {
-    // Logic hiển thị đã có ở handle_game_end
+    // Display logic is already in handle_game_end
     return;
   }
 
   if (msg->status != SUCCESS)
   {
     show_error_dialog(msg->payload);
-    // Mở lại nút
+    // Re-enable buttons
     gtk_widget_set_sensitive(GTK_WIDGET(word_entry), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(submit_button), TRUE);
     return;
   }
 
-  // Xử lý GAME TIẾP TỤC
+  // Handle GAME CONTINUE
   if (strncmp(msg->payload, "CONTINUE", 8) == 0)
   {
     int next_player;
@@ -449,16 +449,18 @@ void handle_game_guess_response(Message *msg)
     int s1, s2;
     sscanf(msg->payload, "CONTINUE|%d|%s|%d|%d", &next_player, last_word, &s1, &s2);
 
-    // --- RESET TIMER (Kể từ lượt thứ 2) ---
+    // --- RESET TIMER (From 2nd turn onwards) ---
     reset_timer();
 
-    // Cập nhật UI
+    // Update UI
     if (next_player == player_num)
     {
-      // Đến lượt mình
+      // My turn
       char msg_text[100];
       char last_char = last_word[4];
-      sprintf(msg_text, "Đối thủ đánh: %s\nHãy nhập từ bắt đầu bằng: '%c'", last_word, last_char);
+
+      // "Đối thủ đánh: %s\nHãy nhập từ bắt đầu bằng: '%c'" -> English
+      sprintf(msg_text, "Opponent played: %s\nEnter word starting with: '%c'", last_word, last_char);
       gtk_label_set_text(required_char_label, msg_text);
 
       gtk_widget_set_sensitive(GTK_WIDGET(word_entry), TRUE);
@@ -468,9 +470,10 @@ void handle_game_guess_response(Message *msg)
     }
     else
     {
-      // Lượt đối thủ
+      // Opponent's turn
       char msg_text[100];
-      sprintf(msg_text, "Bạn đánh: %s\nĐợi đối thủ...", last_word);
+
+      sprintf(msg_text, "You played: %s\nWaiting for opponent...", last_word);
       gtk_label_set_text(required_char_label, msg_text);
 
       gtk_widget_set_sensitive(GTK_WIDGET(word_entry), FALSE);
@@ -573,26 +576,24 @@ void handle_game_end(Message *msg)
     char winner_name[50];
     int score_change = 0;
 
-    // Parse Payload: WINNER|SCORE
     if (sscanf(msg->payload, "%[^|]|%d", winner_name, &score_change) == 2)
     {
       char dialog_msg[200];
 
       if (strcmp(winner_name, client_name) == 0)
       {
-        sprintf(dialog_msg, "CHÚC MỪNG! BẠN ĐÃ THẮNG!\nĐiểm cộng: +%d", score_change);
+        sprintf(dialog_msg, "CONGRATULATIONS! YOU WON!\nPoints added: +%d", score_change);
         show_dialog(dialog_msg);
       }
       else
       {
-        sprintf(dialog_msg, "RẤT TIẾC! BẠN ĐÃ THUA!\nĐiểm trừ: -%d", score_change);
+        sprintf(dialog_msg, "UNFORTUNATELY! YOU LOST!\nPoints deducted: -%d", score_change);
         show_dialog(dialog_msg);
       }
     }
     else
     {
-      // Fallback
-      show_dialog("Game Kết Thúc!");
+      show_dialog("Game Over!");
     }
 
     is_in_game = 0;
@@ -601,6 +602,7 @@ void handle_game_end(Message *msg)
 
     update_client_name_label();
     update_score_label();
+
     gtk_stack_set_visible_child_name(GTK_STACK(stack), "homepage");
   }
 }
