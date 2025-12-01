@@ -4,6 +4,8 @@
 #include <string.h>
 
 #define WORD_LENGTH 5
+
+// --- CẤU TRÚC DỮ LIỆU ---
 typedef struct
 {
   char player_name[50];
@@ -19,19 +21,28 @@ typedef struct
   int player1_score;
   int player2_score;
   char winner[51];
-  char word[WORD_LENGTH + 1];
+  char word[WORD_LENGTH + 1]; // Lưu từ cuối cùng hoặc lý do thắng
   PlayTurn moves[12];
   char start_time[20];
   char end_time[20];
 } GameHistory;
 
-int save_game_history(sqlite3 *db, GameHistory *game);
-
-int get_game_history_by_player(sqlite3 *db, const char *player_name, GameHistory *response);
-
-int create_table(sqlite3 *db)
+// --- HÀM HỖ TRỢ ---
+void handle_db_error(sqlite3 *db, const char *msg)
 {
-  const char *sql =
+  fprintf(stderr, "Error: %s (%s)\n", msg, sqlite3_errmsg(db));
+}
+
+// 1. TẠO LẠI BẢNG (Giữ User, Reset History)
+int reset_tables(sqlite3 *db)
+{
+  // Xóa bảng cũ nếu cần thiết (để reset dữ liệu test)
+  sqlite3_exec(db, "DROP TABLE IF EXISTS moves;", 0, 0, 0);
+  sqlite3_exec(db, "DROP TABLE IF EXISTS game_history;", 0, 0, 0);
+  sqlite3_exec(db, "DROP TABLE IF EXISTS user;", 0, 0, 0);
+
+  // Tạo bảng User (Giữ nguyên cấu trúc cũ)
+  const char *sql_user =
       "CREATE TABLE IF NOT EXISTS user ("
       "id INTEGER PRIMARY KEY AUTOINCREMENT, "
       "username TEXT NOT NULL, "
@@ -39,21 +50,42 @@ int create_table(sqlite3 *db)
       "score INTEGER NOT NULL, "
       "isOnline INTEGER NOT NULL);";
 
-  char *errMsg = 0;
-  int rc = sqlite3_exec(db, sql, 0, 0, &errMsg);
+  // Tạo bảng History (Cấu trúc mới)
+  const char *sql_hist =
+      "CREATE TABLE IF NOT EXISTS game_history ("
+      "game_id TEXT PRIMARY KEY, "
+      "player1 TEXT NOT NULL, "
+      "player2 TEXT NOT NULL, "
+      "player1_score INTEGER, "
+      "player2_score INTEGER, "
+      "winner TEXT, "
+      "word TEXT, "
+      "start_time TEXT, "
+      "end_time TEXT);";
 
-  if (rc != SQLITE_OK)
-  {
-    printf("SQL error: %s\n", errMsg);
-    sqlite3_free(errMsg);
-    return rc;
-  }
+  // Tạo bảng Moves
+  const char *sql_moves =
+      "CREATE TABLE IF NOT EXISTS moves ("
+      "move_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+      "game_id TEXT, "
+      "move_index INTEGER, "
+      "player_name TEXT, "
+      "guess TEXT, "
+      "result TEXT, "
+      "FOREIGN KEY (game_id) REFERENCES game_history(game_id));";
 
-  printf("Table 'user' created successfully or already exists.\n");
+  if (sqlite3_exec(db, sql_user, 0, 0, 0) != SQLITE_OK)
+    return 1;
+  if (sqlite3_exec(db, sql_hist, 0, 0, 0) != SQLITE_OK)
+    return 1;
+  if (sqlite3_exec(db, sql_moves, 0, 0, 0) != SQLITE_OK)
+    return 1;
+
   return SQLITE_OK;
 }
 
-int insert_sample_data(sqlite3 *db)
+// 2. CHÈN DỮ LIỆU USER (GIỮ NGUYÊN DANH SÁCH CŨ CỦA BẠN)
+int insert_sample_users(sqlite3 *db)
 {
   const char *sql_insert =
       "INSERT INTO user (username, password, score, isOnline) VALUES "
@@ -98,175 +130,17 @@ int insert_sample_data(sqlite3 *db)
       "('CrimsonFang', '123', 2000, 1);";
 
   char *errMsg = 0;
-  int rc = sqlite3_exec(db, sql_insert, 0, 0, &errMsg);
-
-  if (rc != SQLITE_OK)
+  if (sqlite3_exec(db, sql_insert, 0, 0, &errMsg) != SQLITE_OK)
   {
-    printf("SQL error: %s\n", errMsg);
+    handle_db_error(db, errMsg);
     sqlite3_free(errMsg);
-    return rc;
+    return 1;
   }
-
-  printf("Sample data inserted successfully.\n");
+  printf("Sample users inserted successfully.\n");
   return SQLITE_OK;
 }
 
-int create_game_history_table(sqlite3 *db)
-{
-  const char *sql_create =
-      "CREATE TABLE IF NOT EXISTS game_history ("
-      "game_id TEXT PRIMARY KEY, "
-      "player1 TEXT NOT NULL, "
-      "player2 TEXT NOT NULL, "
-      "player1_score INTEGER NOT NULL, "
-      "player2_score INTEGER NOT NULL, "
-      "winner TEXT NOT NULL, "
-      "word TEXT NOT NULL, "
-      "start_time TEXT NOT NULL, "
-      "end_time TEXT NOT NULL);";
-
-  char *errMsg = 0;
-  int rc = sqlite3_exec(db, sql_create, 0, 0, &errMsg); // Create the table
-
-  if (rc != SQLITE_OK)
-  {
-    printf("SQL error: %s\n", errMsg);
-    sqlite3_free(errMsg);
-    return rc;
-  }
-
-  printf("Table 'game_history' created successfully or already exists.\n");
-  return SQLITE_OK;
-}
-
-int create_moves_table(sqlite3 *db)
-{
-  const char *sql_create =
-      "CREATE TABLE IF NOT EXISTS moves ("
-      "move_id INTEGER PRIMARY KEY AUTOINCREMENT, "
-      "game_id TEXT, "
-      "move_index INTEGER, "
-      "player_name TEXT, "
-      "guess TEXT, "
-      "result TEXT, "
-      "FOREIGN KEY (game_id) REFERENCES game_history(game_id));";
-
-  char *errMsg = 0;
-  int rc = sqlite3_exec(db, sql_create, 0, 0, &errMsg); // Create the table
-  if (rc != SQLITE_OK)
-  {
-    printf("SQL error: %s\n", errMsg);
-    sqlite3_free(errMsg);
-    return rc;
-  }
-
-  printf("Table 'moves' created successfully or already exists.\n");
-  return SQLITE_OK;
-}
-
-int main()
-{
-  sqlite3 *db;
-  int rc = sqlite3_open("../database.db", &db);
-
-  if (rc)
-  {
-    printf("Can't open database: %s\n", sqlite3_errmsg(db));
-    return 0;
-  }
-  else
-  {
-    printf("Opened database successfully.\n");
-  }
-
-  // Create table if it does not exist
-  if (create_table(db) != SQLITE_OK)
-  {
-    sqlite3_close(db);
-    return 1;
-  }
-
-  // Insert sample data
-  if (insert_sample_data(db) != SQLITE_OK)
-  {
-    sqlite3_close(db);
-    return 1;
-  }
-
-  // Create the "game_history" table if it does not exist
-  if (create_game_history_table(db) != SQLITE_OK)
-  {
-    sqlite3_close(db);
-    return 1;
-  }
-
-  // Create the "moves_table" table if it does not exist
-  if (create_moves_table(db) != SQLITE_OK)
-  {
-    sqlite3_close(db);
-    return 1;
-  }
-
-  // Example GameHistory data
-  GameHistory new_game = {0};
-  strcpy(new_game.game_id, "game001");
-  strcpy(new_game.player1, "BlazeFury");
-  strcpy(new_game.player2, "ThunderStrike");
-  new_game.player1_score = 100;
-  new_game.player2_score = 90;
-  strcpy(new_game.winner, "BlazeFury");
-  strcpy(new_game.word, "apple");
-  strcpy(new_game.start_time, "2024-12-13 14:30:00"); // Example start time
-  strcpy(new_game.end_time, "2024-12-13 14:45:00");   // Example end time
-
-  // Record the moves in the moves array (using PlayTurn)
-  strcpy(new_game.moves[0].player_name, "BlazeFury");
-  strcpy(new_game.moves[0].guess, "alpha");
-  strcpy(new_game.moves[0].result, "XXXXX"); // Example result
-
-  strcpy(new_game.moves[1].player_name, "ThunderStrike");
-  strcpy(new_game.moves[1].guess, "bravo");
-  strcpy(new_game.moves[1].result, "GGGYY"); // Example result
-
-  // Save the game history and moves
-  if (save_game_history(db, &new_game) != SQLITE_OK)
-  {
-    printf("Failed to save game history and moves\n");
-  }
-
-  // Retrieve the game history for a specific player
-  GameHistory retrieved_game = {0};
-  if (get_game_history_by_player(db, "BlazeFury", &retrieved_game) == SQLITE_OK)
-  {
-    printf("Game ID: %s\n", retrieved_game.game_id);
-    printf("Player1: %s\n", retrieved_game.player1);
-    printf("Player2: %s\n", retrieved_game.player2);
-    printf("Winner: %s\n", retrieved_game.winner);
-    printf("Word: %s\n", retrieved_game.word);
-    printf("Start Time: %s\n", retrieved_game.start_time);
-    printf("End Time: %s\n", retrieved_game.end_time);
-
-    for (int i = 0; i < 12; i++)
-    {
-      if (strlen(retrieved_game.moves[i].guess) > 0)
-      { // Ensure there's a move at index i
-        printf("Move %d by %s: Guess = %s, Result = %s\n", i + 1, retrieved_game.moves[i].player_name, retrieved_game.moves[i].guess, retrieved_game.moves[i].result);
-      }
-    }
-  }
-  else
-  {
-    printf("No game found for player 'BlazeFury'.\n");
-  }
-
-  // Close database
-  sqlite3_close(db);
-  printf("Database connection closed.\n");
-
-  return 0;
-}
-
-// Function to save a game history into the database
+// 3. HÀM LƯU GAME (Helper)
 int save_game_history(sqlite3 *db, GameHistory *game)
 {
   const char *sql_insert =
@@ -274,14 +148,8 @@ int save_game_history(sqlite3 *db, GameHistory *game)
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
   sqlite3_stmt *stmt;
-  int rc = sqlite3_prepare_v2(db, sql_insert, -1, &stmt, 0);
-  if (rc != SQLITE_OK)
-  {
-    printf("Failed to prepare statement: %s\n", sqlite3_errmsg(db));
-    return rc;
-  }
+  sqlite3_prepare_v2(db, sql_insert, -1, &stmt, 0);
 
-  // Bind values to the query
   sqlite3_bind_text(stmt, 1, game->game_id, -1, SQLITE_STATIC);
   sqlite3_bind_text(stmt, 2, game->player1, -1, SQLITE_STATIC);
   sqlite3_bind_text(stmt, 3, game->player2, -1, SQLITE_STATIC);
@@ -289,21 +157,13 @@ int save_game_history(sqlite3 *db, GameHistory *game)
   sqlite3_bind_int(stmt, 5, game->player2_score);
   sqlite3_bind_text(stmt, 6, game->winner, -1, SQLITE_STATIC);
   sqlite3_bind_text(stmt, 7, game->word, -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 8, game->start_time, -1, SQLITE_STATIC); // Bind start_time
-  sqlite3_bind_text(stmt, 9, game->end_time, -1, SQLITE_STATIC);   // Bind end_time
+  sqlite3_bind_text(stmt, 8, game->start_time, -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 9, game->end_time, -1, SQLITE_STATIC);
 
-  rc = sqlite3_step(stmt);
-  if (rc != SQLITE_DONE)
-  {
-    printf("Failed to insert game history: %s\n", sqlite3_errmsg(db));
-    sqlite3_finalize(stmt);
-    return rc;
-  }
-
+  sqlite3_step(stmt);
   sqlite3_finalize(stmt);
-  printf("Game history saved successfully.\n");
 
-  // Save moves after the game history has been inserted
+  // Save moves
   const char *sql_insert_move =
       "INSERT INTO moves (game_id, move_index, player_name, guess, result) "
       "VALUES (?, ?, ?, ?, ?);";
@@ -311,108 +171,111 @@ int save_game_history(sqlite3 *db, GameHistory *game)
   for (int i = 0; i < 12; i++)
   {
     if (strlen(game->moves[i].guess) == 0)
-    {
-      break; // No more moves to save
-    }
+      break;
 
-    rc = sqlite3_prepare_v2(db, sql_insert_move, -1, &stmt, 0);
-    if (rc != SQLITE_OK)
-    {
-      printf("Failed to prepare statement for moves: %s\n", sqlite3_errmsg(db));
-      return rc;
-    }
-
+    sqlite3_prepare_v2(db, sql_insert_move, -1, &stmt, 0);
     sqlite3_bind_text(stmt, 1, game->game_id, -1, SQLITE_STATIC);
-    sqlite3_bind_int(stmt, 2, i); // Move index
+    sqlite3_bind_int(stmt, 2, i);
     sqlite3_bind_text(stmt, 3, game->moves[i].player_name, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 4, game->moves[i].guess, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 5, game->moves[i].result, -1, SQLITE_STATIC);
-
-    rc = sqlite3_step(stmt);
-    if (rc != SQLITE_DONE)
-    {
-      printf("Failed to insert move: %s\n", sqlite3_errmsg(db));
-      sqlite3_finalize(stmt);
-      return rc;
-    }
-
+    sqlite3_step(stmt);
     sqlite3_finalize(stmt);
   }
-
-  printf("Moves saved successfully.\n");
   return SQLITE_OK;
 }
 
-// Function to get game history by player name
-int get_game_history_by_player(sqlite3 *db, const char *player_name, GameHistory *response)
+// 4. CHÈN DỮ LIỆU GAME (GAME NỐI TỪ)
+int insert_sample_games(sqlite3 *db)
 {
-  const char *sql_select =
-      "SELECT game_id, player1, player2, player1_score, player2_score, winner, word, start_time, end_time "
-      "FROM game_history "
-      "WHERE player1 = ? OR player2 = ? "
-      "ORDER BY game_id DESC LIMIT 1;"; // Get the most recent game
+  GameHistory g;
 
-  sqlite3_stmt *stmt;
-  int rc = sqlite3_prepare_v2(db, sql_select, -1, &stmt, 0);
-  if (rc != SQLITE_OK)
+  // --- GAME 1: BlazeFury vs ThunderStrike (BlazeFury Thắng) ---
+  memset(&g, 0, sizeof(g));
+  strcpy(g.game_id, "GAME-SEED-001");
+  strcpy(g.player1, "BlazeFury");
+  strcpy(g.player2, "ThunderStrike");
+  g.player1_score = 30; // 3 từ đúng
+  g.player2_score = 20; // 2 từ đúng
+  strcpy(g.winner, "BlazeFury");
+  strcpy(g.word, "TIMEOUT");
+  strcpy(g.start_time, "2024-12-13 14:30:00");
+  strcpy(g.end_time, "2024-12-13 14:35:00");
+
+  // Moves: apple -> eagle -> exist -> toast -> train
+  strcpy(g.moves[0].player_name, "BlazeFury");
+  strcpy(g.moves[0].guess, "apple");
+  strcpy(g.moves[0].result, "VALID");
+  strcpy(g.moves[1].player_name, "ThunderStrike");
+  strcpy(g.moves[1].guess, "eagle");
+  strcpy(g.moves[1].result, "VALID");
+  strcpy(g.moves[2].player_name, "BlazeFury");
+  strcpy(g.moves[2].guess, "exist");
+  strcpy(g.moves[2].result, "VALID");
+  strcpy(g.moves[3].player_name, "ThunderStrike");
+  strcpy(g.moves[3].guess, "toast");
+  strcpy(g.moves[3].result, "VALID");
+  strcpy(g.moves[4].player_name, "BlazeFury");
+  strcpy(g.moves[4].guess, "train");
+  strcpy(g.moves[4].result, "VALID");
+
+  save_game_history(db, &g);
+
+  // --- GAME 2: ShadowHunter vs MysticKnight (MysticKnight Thắng) ---
+  memset(&g, 0, sizeof(g));
+  strcpy(g.game_id, "GAME-SEED-002");
+  strcpy(g.player1, "ShadowHunter");
+  strcpy(g.player2, "MysticKnight");
+  g.player1_score = 10;
+  g.player2_score = 50;
+  strcpy(g.winner, "MysticKnight");
+  strcpy(g.word, "TIMEOUT");
+  strcpy(g.start_time, "2024-12-14 10:00:00");
+  strcpy(g.end_time, "2024-12-14 10:02:00");
+
+  // Moves: hello -> order -> robot
+  strcpy(g.moves[0].player_name, "ShadowHunter");
+  strcpy(g.moves[0].guess, "hello");
+  strcpy(g.moves[0].result, "VALID");
+  strcpy(g.moves[1].player_name, "MysticKnight");
+  strcpy(g.moves[1].guess, "order");
+  strcpy(g.moves[1].result, "VALID");
+  strcpy(g.moves[2].player_name, "ShadowHunter");
+  strcpy(g.moves[2].guess, "robot");
+  strcpy(g.moves[2].result, "VALID");
+
+  save_game_history(db, &g);
+
+  printf("Sample games inserted successfully.\n");
+  return SQLITE_OK;
+}
+
+int main()
+{
+  sqlite3 *db;
+  int rc = sqlite3_open("../database.db", &db); // Lưu ý đường dẫn DB
+
+  if (rc)
   {
-    printf("Failed to prepare statement: %s\n", sqlite3_errmsg(db));
-    return rc;
+    printf("Can't open database: %s\n", sqlite3_errmsg(db));
+    return 0;
   }
 
-  sqlite3_bind_text(stmt, 1, player_name, -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 2, player_name, -1, SQLITE_STATIC);
+  // Bật Foreign Key
+  sqlite3_exec(db, "PRAGMA foreign_keys = ON;", 0, 0, 0);
 
-  rc = sqlite3_step(stmt);
-  if (rc == SQLITE_ROW)
+  // Tạo lại cấu trúc bảng
+  if (reset_tables(db) != SQLITE_OK)
   {
-    // Populate the GameHistory response
-    strncpy(response->game_id, (const char *)sqlite3_column_text(stmt, 0), sizeof(response->game_id) - 1);
-    strncpy(response->player1, (const char *)sqlite3_column_text(stmt, 1), sizeof(response->player1) - 1);
-    strncpy(response->player2, (const char *)sqlite3_column_text(stmt, 2), sizeof(response->player2) - 1);
-    response->player1_score = sqlite3_column_int(stmt, 3);
-    response->player2_score = sqlite3_column_int(stmt, 4);
-    strncpy(response->winner, (const char *)sqlite3_column_text(stmt, 5), sizeof(response->winner) - 1);
-    strncpy(response->word, (const char *)sqlite3_column_text(stmt, 6), sizeof(response->word) - 1);
-    strncpy(response->start_time, (const char *)sqlite3_column_text(stmt, 7), sizeof(response->start_time) - 1); // Get start_time
-    strncpy(response->end_time, (const char *)sqlite3_column_text(stmt, 8), sizeof(response->end_time) - 1);     // Get end_time
-
-    sqlite3_finalize(stmt);
-
-    // Get moves for the game
-    const char *sql_select_moves =
-        "SELECT player_name, guess, result FROM moves "
-        "WHERE game_id = ? "
-        "ORDER BY move_index ASC;";
-
-    rc = sqlite3_prepare_v2(db, sql_select_moves, -1, &stmt, 0);
-    if (rc != SQLITE_OK)
-    {
-      printf("Failed to prepare statement for moves: %s\n", sqlite3_errmsg(db));
-      return rc;
-    }
-
-    sqlite3_bind_text(stmt, 1, response->game_id, -1, SQLITE_STATIC);
-    int move_count = 0;
-
-    while (sqlite3_step(stmt) == SQLITE_ROW && move_count < 12)
-    {
-      const char *player_name = (const char *)sqlite3_column_text(stmt, 0);
-      const char *guess = (const char *)sqlite3_column_text(stmt, 1);
-      const char *result = (const char *)sqlite3_column_text(stmt, 2);
-
-      strncpy(response->moves[move_count].player_name, player_name, sizeof(response->moves[move_count].player_name) - 1);
-      strncpy(response->moves[move_count].guess, guess, sizeof(response->moves[move_count].guess) - 1);
-      strncpy(response->moves[move_count].result, result, sizeof(response->moves[move_count].result) - 1);
-
-      move_count++;
-    }
-
-    sqlite3_finalize(stmt);
-
-    return SQLITE_OK;
+    sqlite3_close(db);
+    return 1;
   }
 
-  sqlite3_finalize(stmt);
-  return SQLITE_DONE; // No game found
+  // Chèn dữ liệu
+  insert_sample_users(db);
+  insert_sample_games(db);
+
+  sqlite3_close(db);
+  printf("Seed data completed successfully.\n");
+  return 0;
 }
