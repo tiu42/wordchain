@@ -69,34 +69,38 @@ static GtkEntry *hint_entry; // Biến mới để hiển thị từ xáo trộn
 gboolean timer_func(gpointer data)
 {
   if (!is_in_game)
-    return FALSE; // Dừng nếu hết game
+    return FALSE;
 
   if (time_left > 0)
   {
     time_left--;
-    char buffer[20];
+    char buffer[30];
     sprintf(buffer, "Time: %ds", time_left);
     gtk_label_set_text(timer_label, buffer);
 
-    // Đổi màu đỏ nếu sắp hết giờ
     if (time_left <= 3)
     {
-      // (Code đổi màu CSS nếu muốn, tạm thời bỏ qua cho đơn giản)
+      // Đổi màu đỏ (nếu cần)
     }
-    return TRUE; // Tiếp tục gọi hàm này
+    return TRUE;
   }
   else
   {
-    // HẾT GIỜ!
+    // --- HẾT GIỜ ---
     gtk_label_set_text(timer_label, "Time's up!");
 
-    // Nếu là lượt của mình mà để hết giờ -> Tự động gửi thua hoặc để Server xử lý
-    // Ở đây ta chỉ cần đợi Server gửi TIMEOUT_LOSE về, hoặc chặn nhập liệu
+    // Khóa nút
     gtk_widget_set_sensitive(GTK_WIDGET(word_entry), FALSE);
     gtk_widget_set_sensitive(GTK_WIDGET(submit_button), FALSE);
 
+    // Gửi thông báo thua lên Server
+    Message msg;
+    msg.message_type = GAME_TIMEOUT;
+    sprintf(msg.payload, "%d|%s", game_session_id, client_name);
+    queue_push(&send_queue, &msg);
+
     timer_id = 0;
-    return FALSE; // Dừng timer
+    return FALSE;
   }
 }
 
@@ -104,9 +108,7 @@ gboolean timer_func(gpointer data)
 void reset_timer()
 {
   if (timer_id > 0)
-  {
     g_source_remove(timer_id);
-  }
   time_left = 10;
   gtk_label_set_text(timer_label, "Time: 10s");
   timer_id = g_timeout_add_seconds(1, timer_func, NULL);
@@ -336,43 +338,40 @@ void handle_game_start_response(Message *msg)
 {
   if (msg->status == SUCCESS)
   {
-
-    GtkLabel *player1_score_label = GTK_LABEL(gtk_builder_get_object(builder, "player1_score_label"));
-    gtk_label_set_text(player1_score_label, "");
-    GtkLabel *player2_score_label = GTK_LABEL(gtk_builder_get_object(builder, "player2_score_label"));
-    gtk_label_set_text(player2_score_label, "");
+    // Reset điểm hiển thị (nếu cần)
+    GtkLabel *p1_lbl = GTK_LABEL(gtk_builder_get_object(builder, "player1_score_label"));
+    if (p1_lbl)
+      gtk_label_set_text(p1_lbl, "0");
+    GtkLabel *p2_lbl = GTK_LABEL(gtk_builder_get_object(builder, "player2_score_label"));
+    if (p2_lbl)
+      gtk_label_set_text(p2_lbl, "0");
 
     sscanf(msg->payload, "%d|%d", &game_session_id, &player_num);
-
-    printf("Game session %d started and you are player %d\n", game_session_id, player_num);
+    printf("Game session %d started. You are P%d\n", game_session_id, player_num);
     is_in_game = 1;
-    init_game_state(game_session_id);
 
-    // Switch to game view
+    // --- RESET UI CHO TRẬN MỚI ---
+    reset_game_ui_for_new_match();
+
+    // Chuyển màn hình
     gtk_stack_set_visible_child_name(GTK_STACK(stack), "game");
-    GtkLabel *turn_notify_label = GTK_LABEL(gtk_builder_get_object(builder, "turn_notify"));
 
-    if (turn_notify_label)
+    // --- CẤU HÌNH LƯỢT ĐẦU TIÊN ---
+    if (player_num == 1)
     {
-      if (player_num == 1)
-      {
-        gtk_widget_set_sensitive(GTK_WIDGET(word_entry), TRUE);
-        gtk_widget_set_sensitive(GTK_WIDGET(submit_button), TRUE);
-        gtk_label_set_text(turn_notify_label, "Your turn");
-      }
-      else
-      {
-        gtk_widget_set_sensitive(GTK_WIDGET(word_entry), FALSE);
-        gtk_widget_set_sensitive(GTK_WIDGET(submit_button), FALSE);
-        gtk_label_set_text(turn_notify_label, "Opponent's turn");
-      }
+      // Người đi đầu
+      gtk_label_set_text(timer_label, "Time: ∞ (Lượt đầu)");
+      gtk_widget_set_sensitive(GTK_WIDGET(word_entry), TRUE);
+      gtk_widget_set_sensitive(GTK_WIDGET(submit_button), TRUE);
+      gtk_widget_grab_focus(GTK_WIDGET(word_entry));
     }
-
-    // Reset game state
-    current_row = 0;
-    opponent_attempts = 0;
-    current_col = 0;
-    memset(current_word, 0, sizeof(current_word));
+    else
+    {
+      // Người đi sau
+      gtk_label_set_text(timer_label, "Đợi đối thủ...");
+      gtk_widget_set_sensitive(GTK_WIDGET(word_entry), FALSE);
+      gtk_widget_set_sensitive(GTK_WIDGET(submit_button), FALSE);
+    }
   }
   else
   {
@@ -426,36 +425,23 @@ void handle_game_turn_response(Message *msg)
 
 void handle_game_guess_response(Message *msg)
 {
-  // Xử lý Hết giờ
+  // Xử lý Hết giờ (Do server báo về)
   if (strncmp(msg->payload, "TIMEOUT_LOSE", 12) == 0)
   {
-    char loser[50];
-    sscanf(msg->payload, "TIMEOUT_LOSE|%s", loser);
-    if (strcmp(loser, client_name) == 0)
-    {
-      show_dialog("BẠN ĐÃ HẾT GIỜ! BẠN THUA.");
-    }
-    else
-    {
-      show_dialog("ĐỐI THỦ HẾT GIỜ! BẠN THẮNG.");
-    }
-    is_in_game = 0;
-    if (timer_id > 0)
-      g_source_remove(timer_id);
+    // Logic hiển thị đã có ở handle_game_end
     return;
   }
 
   if (msg->status != SUCCESS)
   {
-    // Nếu lỗi (nhập sai từ, sai luật)
     show_error_dialog(msg->payload);
-    // Mở lại nút để nhập lại
+    // Mở lại nút
     gtk_widget_set_sensitive(GTK_WIDGET(word_entry), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(submit_button), TRUE);
     return;
   }
 
-  // Xử lý game tiếp diễn (CONTINUE)
+  // Xử lý GAME TIẾP TỤC
   if (strncmp(msg->payload, "CONTINUE", 8) == 0)
   {
     int next_player;
@@ -463,18 +449,15 @@ void handle_game_guess_response(Message *msg)
     int s1, s2;
     sscanf(msg->payload, "CONTINUE|%d|%s|%d|%d", &next_player, last_word, &s1, &s2);
 
-    // Reset đồng hồ vì đã sang lượt mới
+    // --- RESET TIMER (Kể từ lượt thứ 2) ---
     reset_timer();
-
-    // Cập nhật điểm (nếu có label điểm)
-    // update_score_ui(s1, s2); (Bạn tự thêm logic update label điểm vào đây)
 
     // Cập nhật UI
     if (next_player == player_num)
     {
       // Đến lượt mình
       char msg_text[100];
-      char last_char = last_word[4]; // Ký tự cuối (index 4 cho từ 5 chữ)
+      char last_char = last_word[4];
       sprintf(msg_text, "Đối thủ đánh: %s\nHãy nhập từ bắt đầu bằng: '%c'", last_word, last_char);
       gtk_label_set_text(required_char_label, msg_text);
 
@@ -587,29 +570,38 @@ void handle_game_end(Message *msg)
 {
   if (msg->status == SUCCESS)
   {
-    char player_name[50];
-    sscanf(msg->payload, "%s", player_name);
+    char winner_name[50];
+    int score_change = 0;
 
-    // Check if the current client is the losing player
-    if (strcmp(player_name, client_name) == 0)
+    // Parse Payload: WINNER|SCORE
+    if (sscanf(msg->payload, "%[^|]|%d", winner_name, &score_change) == 2)
     {
-      show_dialog("You lose!");
-      is_in_game = 0;
+      char dialog_msg[200];
+
+      if (strcmp(winner_name, client_name) == 0)
+      {
+        sprintf(dialog_msg, "CHÚC MỪNG! BẠN ĐÃ THẮNG!\nĐiểm cộng: +%d", score_change);
+        show_dialog(dialog_msg);
+      }
+      else
+      {
+        sprintf(dialog_msg, "RẤT TIẾC! BẠN ĐÃ THUA!\nĐiểm trừ: -%d", score_change);
+        show_dialog(dialog_msg);
+      }
     }
     else
     {
-      show_dialog("You win! The opponent has left the game.");
-      is_in_game = 0;
+      // Fallback
+      show_dialog("Game Kết Thúc!");
     }
 
-    // Update UI components
+    is_in_game = 0;
+    if (timer_id > 0)
+      g_source_remove(timer_id);
+
     update_client_name_label();
     update_score_label();
     gtk_stack_set_visible_child_name(GTK_STACK(stack), "homepage");
-  }
-  else
-  {
-    show_error_dialog("Failed to end game");
   }
 }
 
@@ -1830,48 +1822,97 @@ void set_signal_connect();
 /********************************************************************************/
 
 /********************************Game board**************************************/
+void reset_game_ui_for_new_match()
+{
+  // Reset Timer
+  if (timer_id > 0)
+    g_source_remove(timer_id);
+  timer_id = 0;
+  time_left = 10;
+
+  // Reset Label Text
+  if (timer_label)
+    gtk_label_set_text(timer_label, "Ready...");
+  if (required_char_label)
+    gtk_label_set_text(required_char_label, "First turn: Enter any word");
+
+  // Reset Input
+  if (word_entry)
+  {
+    gtk_entry_set_text(word_entry, "");
+    // Lock initially, unlock later based on turn
+    gtk_widget_set_sensitive(GTK_WIDGET(word_entry), FALSE);
+  }
+  if (submit_button)
+  {
+    gtk_widget_set_sensitive(GTK_WIDGET(submit_button), FALSE);
+  }
+}
+
 // Initialize the game board UI components
 void init_game_board(GtkBuilder *builder)
 {
-  printf("Initializing Word Chain Board\n");
+  printf("Initializing Word Chain Board (Final Fix)\n");
 
+  // 1. HIDE OLD WIDGETS FROM GLADE (To avoid showing 2 input boxes)
+  GtkWidget *old_entry = GTK_WIDGET(gtk_builder_get_object(builder, "word_entry"));
+  if (old_entry)
+    gtk_widget_hide(old_entry); // Hide old entry
+
+  GtkWidget *old_btn = GTK_WIDGET(gtk_builder_get_object(builder, "submit_word"));
+  if (old_btn)
+    gtk_widget_hide(old_btn); // Hide old button
+
+  // 2. Get Grid and clear old children
   GtkWidget *grid = GTK_WIDGET(gtk_builder_get_object(builder, "wordle_grid"));
   if (!grid)
     return;
 
-  // Xóa UI cũ
   GList *children, *iter;
   children = gtk_container_get_children(GTK_CONTAINER(grid));
   for (iter = children; iter != NULL; iter = g_list_next(iter))
     gtk_widget_destroy(GTK_WIDGET(iter->data));
   g_list_free(children);
 
-  // --- UI MỚI ---
+  // 3. Setup Grid
+  gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+  gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
 
-  // 1. Đồng hồ đếm ngược
-  timer_label = GTK_LABEL(gtk_label_new("Time: 10s"));
-  PangoAttrList *attrs_time = pango_attr_list_new();
-  pango_attr_list_insert(attrs_time, pango_attr_scale_new(1.5));
-  pango_attr_list_insert(attrs_time, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
-  pango_attr_list_insert(attrs_time, pango_attr_foreground_new(65535, 0, 0)); // Màu đỏ
-  gtk_label_set_attributes(timer_label, attrs_time);
-  pango_attr_list_unref(attrs_time);
+  // 4. CREATE NEW UI
 
-  // 2. Thông báo yêu cầu (Ví dụ: "Hãy nhập từ bắt đầu bằng 'E'")
-  required_char_label = GTK_LABEL(gtk_label_new("Lượt đầu tiên: Nhập từ bất kỳ (5 ký tự)"));
+  // Timer
+  timer_label = GTK_LABEL(gtk_label_new("Time: --"));
+  PangoAttrList *attrs = pango_attr_list_new();
+  pango_attr_list_insert(attrs, pango_attr_scale_new(1.5));
+  pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+  pango_attr_list_insert(attrs, pango_attr_foreground_new(65535, 0, 0));
+  gtk_label_set_attributes(timer_label, attrs);
+  pango_attr_list_unref(attrs);
 
-  // 3. Ô nhập liệu (Lấy từ Glade)
-  word_entry = GTK_ENTRY(gtk_builder_get_object(builder, "word_entry"));
-  submit_button = GTK_WIDGET(gtk_builder_get_object(builder, "submit_word"));
+  // Requirement Label
+  // "Lượt đầu tiên: Nhập từ bất kỳ (5 ký tự)" -> English
+  required_char_label = GTK_LABEL(gtk_label_new("First turn: Enter any word (5 characters)"));
 
-  // Gắn vào Grid
+  // NEW Input Entry (Assign to global variable)
+  word_entry = GTK_ENTRY(gtk_entry_new());
+  gtk_entry_set_max_length(word_entry, 5);
+  gtk_widget_set_hexpand(GTK_WIDGET(word_entry), TRUE);
+
+  // NEW Submit Button
+  // "Gửi" -> English
+  submit_button = gtk_button_new_with_label("Submit");
+
+  // Connect signals
+  g_signal_connect(submit_button, "clicked", G_CALLBACK(on_submit_word_clicked), NULL);
+  g_signal_connect(word_entry, "activate", G_CALLBACK(on_submit_word_clicked), NULL);
+
+  // Attach to Grid
   gtk_grid_attach(GTK_GRID(grid), GTK_WIDGET(timer_label), 0, 0, 1, 1);
   gtk_grid_attach(GTK_GRID(grid), GTK_WIDGET(required_char_label), 0, 1, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), GTK_WIDGET(word_entry), 0, 2, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), submit_button, 0, 3, 1, 1);
 
   gtk_widget_show_all(grid);
-
-  // Bắt đầu đếm giờ ngay khi vào game
-  reset_timer();
 }
 /********************************************************************************/
 
@@ -2011,16 +2052,16 @@ void set_signal_connect()
     g_signal_connect(button, "clicked", G_CALLBACK(on_ReloadUserOnlineSubmit_clicked), stack);
   }
 
-  button = GTK_WIDGET(gtk_builder_get_object(builder, "submit_word"));
-  if (button)
-  {
-    g_signal_connect(button, "clicked", G_CALLBACK(on_submit_word_clicked), NULL);
-  }
+  // button = GTK_WIDGET(gtk_builder_get_object(builder, "submit_word"));
+  // if (button)
+  // {
+  //   g_signal_connect(button, "clicked", G_CALLBACK(on_submit_word_clicked), NULL);
+  // }
 
-  // 2. (Tùy chọn) Gán sự kiện cho ô nhập liệu (Để bấm Enter cũng gửi được)
-  GtkWidget *entry = GTK_WIDGET(gtk_builder_get_object(builder, "word_entry"));
-  if (entry)
-  {
-    g_signal_connect(entry, "activate", G_CALLBACK(on_submit_word_clicked), NULL);
-  }
+  // // 2. (Tùy chọn) Gán sự kiện cho ô nhập liệu (Để bấm Enter cũng gửi được)
+  // GtkWidget *entry = GTK_WIDGET(gtk_builder_get_object(builder, "word_entry"));
+  // if (entry)
+  // {
+  //   g_signal_connect(entry, "activate", G_CALLBACK(on_submit_word_clicked), NULL);
+  // }
 }

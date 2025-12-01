@@ -211,16 +211,18 @@ int create_game_session(const char *player1_name, const char *player2_name)
       strcpy(game_sessions[i].player1_name, player1_name);
       strcpy(game_sessions[i].player2_name, player2_name);
 
-      // --- KHỞI TẠO GAME NỐI TỪ ---
+      // --- LOGIC NỐI TỪ ---
       game_sessions[i].current_player = 1;
-      memset(game_sessions[i].last_word, 0, sizeof(game_sessions[i].last_word)); // Chưa có từ nào
-      game_sessions[i].last_move_time = time(NULL);                              // Bắt đầu tính giờ
+      memset(game_sessions[i].last_word, 0, sizeof(game_sessions[i].last_word));
+
+      // Đặt bằng 0 để đánh dấu là lượt đầu tiên chưa tính giờ
+      game_sessions[i].last_move_time = 0;
 
       game_sessions[i].player1_score = 0;
       game_sessions[i].player2_score = 0;
 
       game_sessions[i].game_active = 1;
-      game_sessions[i].current_attempts = 0;
+      game_sessions[i].current_attempts = 0; // Đếm số lượt đi
       get_time_as_string(game_sessions[i].start_time, sizeof(game_sessions[i].start_time));
       return i;
     }
@@ -954,7 +956,7 @@ void handle_message(int client_sock, Message *message)
     GameSession *session = &game_sessions[session_id];
     int player_num = (strcmp(player_name, session->player1_name) == 0) ? 1 : 2;
 
-    // 1. Kiểm tra lượt
+    // 1. Kiểm tra có phải lượt người này không
     if (player_num != session->current_player)
     {
       strcpy(message->payload, "Not your turn");
@@ -963,43 +965,56 @@ void handle_message(int client_sock, Message *message)
       return;
     }
 
-    // 2. KIỂM TRA THỜI GIAN (10s)
-    time_t now = time(NULL);
-    double time_diff = difftime(now, session->last_move_time);
-    if (time_diff > 12.0)
-    { // Cho phép trễ 2s do mạng (10s + 2s)
-      // Xử lý thua do hết giờ
-      message->status = SUCCESS;
-      sprintf(message->payload, "TIMEOUT_LOSE|%s", player_name);
+    // 2. KIỂM TRA THỜI GIAN
+    // Chỉ kiểm tra nếu KHÔNG PHẢI lượt đầu tiên (attempts > 0)
+    if (session->current_attempts > 0)
+    {
+      time_t now = time(NULL);
+      double time_diff = difftime(now, session->last_move_time);
 
-      // Gửi thông báo cho cả 2
-      int s1 = get_player_sock(session->player1_name);
-      int s2 = get_player_sock(session->player2_name);
-      if (s1 != -1)
-        send(s1, message, sizeof(Message), 0);
-      if (s2 != -1)
-        send(s2, message, sizeof(Message), 0);
+      if (time_diff > 12.0)
+      { // 10s + 2s trễ mạng
+        // Xử thua vì hết giờ
+        message->status = SUCCESS;
+        sprintf(message->payload, "TIMEOUT_LOSE|%s", player_name);
 
-      // Kết thúc game
-      session->game_active = 0;
-      clear_game_session(session_id);
-      return;
+        int s1 = get_player_sock(session->player1_name);
+        int s2 = get_player_sock(session->player2_name);
+        if (s1 != -1)
+          send(s1, message, sizeof(Message), 0);
+        if (s2 != -1)
+          send(s2, message, sizeof(Message), 0);
+
+        // Gọi logic xử lý timeout để tính điểm và kết thúc
+        // (Để đơn giản, client sẽ tự ngắt, server clear session)
+        session->game_active = 0;
+        clear_game_session(session_id);
+        return;
+      }
     }
 
-    // 3. Kiểm tra từ vựng (Có trong từ điển không)
-    if (!is_valid_guess(guess))
+    int is_duplicate = 0;
+    for (int i = 0; i < session->current_attempts; i++)
     {
-      strcpy(message->payload, "Invalid word (Not in dictionary)");
+      if (strcmp(session->turns[i].guess, guess) == 0)
+      {
+        is_duplicate = 1;
+        break;
+      }
+    }
+
+    if (is_duplicate)
+    {
+      strcpy(message->payload, "Word already used!");
       message->status = BAD_REQUEST;
       send(client_sock, message, sizeof(Message), 0);
       return;
     }
 
-    // 4. KIỂM TRA LOGIC NỐI TỪ
-    // Nếu không phải lượt đầu tiên, từ mới phải bắt đầu bằng ký tự cuối của từ cũ
+    // 4. KIỂM TRA LUẬT NỐI TỪ
     if (session->current_attempts > 0)
     {
-      char required_char = session->last_word[WORD_LENGTH - 1]; // Ký tự cuối
+      char required_char = session->last_word[WORD_LENGTH - 1];
       if (guess[0] != required_char)
       {
         char err_msg[100];
@@ -1011,23 +1026,22 @@ void handle_message(int client_sock, Message *message)
       }
     }
 
-    // --- NẾU HỢP LỆ ---
+    // --- HỢP LỆ ---
 
-    // Cập nhật từ mới và thời gian
+    // Cập nhật từ mới
     strcpy(session->last_word, guess);
-    session->last_move_time = time(NULL); // Reset đồng hồ cho người kia
 
-    // Cộng điểm (mỗi từ đúng +10 điểm)
+    // Reset đồng hồ tính giờ cho người tiếp theo
+    session->last_move_time = time(NULL);
+
+    // Cộng điểm (Mỗi từ đúng +10 điểm)
     if (player_num == 1)
       session->player1_score += 10;
     else
       session->player2_score += 10;
 
     // Đổi lượt
-    if (player_num == 1)
-      session->current_player = 2;
-    else
-      session->current_player = 1;
+    session->current_player = (player_num == 1) ? 2 : 1;
 
     // Lưu lịch sử
     strcpy(session->turns[session->current_attempts].player_name, player_name);
@@ -1035,8 +1049,7 @@ void handle_message(int client_sock, Message *message)
     strcpy(session->turns[session->current_attempts].result, "VALID");
     session->current_attempts++;
 
-    // Gửi phản hồi CONTINUE cho cả 2 để cập nhật UI
-    // Payload: CONTINUE | NextPlayer | LastWord | P1Score | P2Score
+    // Gửi phản hồi CONTINUE
     sprintf(message->payload, "CONTINUE|%d|%s|%d|%d",
             session->current_player, session->last_word,
             session->player1_score, session->player2_score);
@@ -1252,6 +1265,92 @@ void handle_message(int client_sock, Message *message)
 
       clear_game_session(session_id);
     }
+    break;
+  }
+  case GAME_TIMEOUT:
+  {
+    int session_id;
+    char loser_name[50];
+    sscanf(message->payload, "%d|%49s", &session_id, loser_name);
+
+    GameSession *session = &game_sessions[session_id];
+    if (!session->game_active)
+      break;
+
+    // Xác định người thắng
+    char winner_name[50];
+    int winner_sock, loser_sock;
+    int loser_num; // 1 hoặc 2
+
+    if (strcmp(loser_name, session->player1_name) == 0)
+    {
+      strcpy(winner_name, session->player2_name);
+      loser_sock = get_player_sock(session->player1_name);
+      winner_sock = get_player_sock(session->player2_name);
+      loser_num = 1;
+    }
+    else
+    {
+      strcpy(winner_name, session->player1_name);
+      loser_sock = get_player_sock(session->player2_name);
+      winner_sock = get_player_sock(session->player1_name);
+      loser_num = 2;
+    }
+
+    // --- TÍNH ĐIỂM (Càng thắng nhanh càng nhiều điểm) ---
+    // Công thức: 50 điểm gốc + (200 / số lượt).
+    int turns = (session->current_attempts > 0) ? session->current_attempts : 1;
+    int score_change = 50 + (200 / turns);
+
+    // Cập nhật DB
+    User winner_user, loser_user;
+    if (get_user_by_username(db, winner_name, &winner_user) == SQLITE_OK)
+    {
+      update_user_score(db, winner_name, winner_user.score + score_change);
+    }
+    if (get_user_by_username(db, loser_name, &loser_user) == SQLITE_OK)
+    {
+      int new_score = (loser_user.score - score_change < 0) ? 0 : (loser_user.score - score_change);
+      update_user_score(db, loser_name, new_score);
+    }
+
+    // Gửi kết quả
+    Message end_msg;
+    end_msg.message_type = GAME_END;
+    end_msg.status = SUCCESS;
+    // Payload: WINNER_NAME | SCORE_CHANGE
+    sprintf(end_msg.payload, "%s|%d", winner_name, score_change);
+
+    if (winner_sock != -1)
+      send(winner_sock, &end_msg, sizeof(Message), 0);
+    if (loser_sock != -1)
+      send(loser_sock, &end_msg, sizeof(Message), 0);
+
+    // Lưu lịch sử và dọn dẹp
+    session->game_active = 0;
+
+    GameHistory game_history;
+    strcpy(game_history.game_id, session->game_id);
+    strcpy(game_history.player1, session->player1_name);
+    strcpy(game_history.player2, session->player2_name);
+    strcpy(game_history.winner, winner_name);
+    game_history.player1_score = (loser_num == 2) ? score_change : 0;
+    game_history.player2_score = (loser_num == 1) ? score_change : 0;
+
+    get_time_as_string(game_history.end_time, sizeof(game_history.end_time));
+    strcpy(game_history.start_time, session->start_time);
+    strcpy(game_history.word, "TIMEOUT");
+
+    // Copy moves (tối đa 12)
+    for (int i = 0; i < 12; i++)
+    {
+      if (i >= session->current_attempts)
+        break;
+      game_history.moves[i] = session->turns[i];
+    }
+
+    save_game_history(db, &game_history);
+    clear_game_session(session_id);
     break;
   }
   default:

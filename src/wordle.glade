@@ -508,7 +508,7 @@
                 <property name="y">40</property>
               </packing>
             </child>
-            <child>
+            <!-- <child>
               <object class="GtkLabel" id="player1_score_label">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
@@ -535,7 +535,7 @@
                 <property name="x">1200</property>
                 <property name="y">150</property>
               </packing>
-            </child>
+            </child> -->
             <child>
               <object class="GtkLabel" id="turn_notify">
                 <property name="width-request">125</property>
@@ -600,7 +600,7 @@
                 <property name="y">100</property>
               </packing>
             </child>
-            <child>
+            <!-- <child>
               <object class="GtkEntry" id="word_entry">
                 <property name="width-request">200</property>
                 <property name="height-request">50</property>
@@ -628,7 +628,7 @@
                 <property name="x">320</property>
                 <property name="y">220</property>
               </packing>
-            </child>
+            </child> -->
             <child>
               <object class="GtkLabel" id="GameLabel">
                 <property name="width-request">100</property>
