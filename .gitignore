@@ -1,15 +1,24 @@
-# binaries
+# Ignore object files
+*.o
+
+# Ignore executable files
 server
 client
 
-# sqlite DB
-*.db
-
-# object files
-*.o
-
-# temp
+# Ignore backup files created by editors (e.g., vim, emacs)
 *~
-*.log
+*.bak
+*.swp
 
-*/seed/*
+# Ignore GTK-generated files
+*.glade~
+
+# Ignore log and temporary files
+*.log
+*.tmp
+
+# Ignore compiled code and build artifacts
+build/
+bin/
+
+database.db

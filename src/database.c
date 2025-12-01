@@ -61,20 +61,8 @@ int read_user(sqlite3 *db, const char *username, User *user) {
   rc = sqlite3_step(stmt);
   if (rc == SQLITE_ROW) {
     user->id = sqlite3_column_int(stmt, 0);
-    const char *db_username = (const char *)sqlite3_column_text(stmt, 1);
-    const char *db_password = (const char *)sqlite3_column_text(stmt, 2);
-    if (db_username) {
-      strncpy(user->username, db_username, sizeof(user->username) - 1);
-      user->username[sizeof(user->username) - 1] = '\0';
-    } else {
-      user->username[0] = '\0';
-    }
-    if (db_password) {
-      strncpy(user->password, db_password, sizeof(user->password) - 1);
-      user->password[sizeof(user->password) - 1] = '\0';
-    } else {
-      user->password[0] = '\0';
-    }
+    strcpy(user->username, (const char *)sqlite3_column_text(stmt, 1));
+    strcpy(user->password, (const char *)sqlite3_column_text(stmt, 2));
     user->score = sqlite3_column_int(stmt, 3);
     user->is_online = sqlite3_column_int(stmt, 4);
   } else if (rc == SQLITE_DONE) {
@@ -193,20 +181,8 @@ int get_user_by_username(sqlite3 *db, const char *username, User *user) {
 
   if (rc == SQLITE_ROW) {
     user->id = sqlite3_column_int(stmt, 0);
-    const char *db_username = (const char *)sqlite3_column_text(stmt, 1);
-    const char *db_password = (const char *)sqlite3_column_text(stmt, 2);
-    if (db_username) {
-      strncpy(user->username, db_username, sizeof(user->username) - 1);
-      user->username[sizeof(user->username) - 1] = '\0';
-    } else {
-      user->username[0] = '\0';
-    }
-    if (db_password) {
-      strncpy(user->password, db_password, sizeof(user->password) - 1);
-      user->password[sizeof(user->password) - 1] = '\0';
-    } else {
-      user->password[0] = '\0';
-    }
+    strcpy(user->username, (const char *)sqlite3_column_text(stmt, 1));
+    strcpy(user->password, (const char *)sqlite3_column_text(stmt, 2));
     user->score = sqlite3_column_int(stmt, 3);
     user->is_online = sqlite3_column_int(stmt, 4);
     sqlite3_finalize(stmt);
