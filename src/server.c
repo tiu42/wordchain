@@ -841,7 +841,7 @@ void handle_message(int client_sock, Message *message)
     GameSession *session = &game_sessions[session_id];
     int player_num = (strcmp(player_name, session->player1_name) == 0) ? 1 : 2;
 
-    // 1. Kiểm tra có phải lượt người này không
+    // 1. Kiểm tra lượt
     if (player_num != session->current_player)
     {
       strcpy(message->payload, "Not your turn");
@@ -850,34 +850,35 @@ void handle_message(int client_sock, Message *message)
       return;
     }
 
-    // 2. KIỂM TRA THỜI GIAN
-    // Chỉ kiểm tra nếu KHÔNG PHẢI lượt đầu tiên (attempts > 0)
+    // 2. Kiểm tra thời gian (Timeout)
     if (session->current_attempts > 0)
     {
       time_t now = time(NULL);
-      double time_diff = difftime(now, session->last_move_time);
-
-      if (time_diff > 12.0)
-      { // 10s + 2s trễ mạng
-        // Xử thua vì hết giờ
+      if (difftime(now, session->last_move_time) > 12.0)
+      {
         message->status = SUCCESS;
         sprintf(message->payload, "TIMEOUT_LOSE|%s", player_name);
-
         int s1 = get_player_sock(session->player1_name);
         int s2 = get_player_sock(session->player2_name);
         if (s1 != -1)
           send(s1, message, sizeof(Message), 0);
         if (s2 != -1)
           send(s2, message, sizeof(Message), 0);
-
-        // Gọi logic xử lý timeout để tính điểm và kết thúc
-        // (Để đơn giản, client sẽ tự ngắt, server clear session)
-        session->game_active = 0;
         clear_game_session(session_id);
         return;
       }
     }
 
+    // 3. KIỂM TRA TỪ CÓ TRONG TỪ ĐIỂN KHÔNG (QUAN TRỌNG)
+    if (!is_valid_guess(guess))
+    {
+      strcpy(message->payload, "Invalid word (Not in dictionary)!");
+      message->status = BAD_REQUEST;
+      send(client_sock, message, sizeof(Message), 0);
+      return; // Dừng ngay nếu từ không hợp lệ
+    }
+
+    // 4. Kiểm tra từ đã dùng chưa (Duplicate)
     int is_duplicate = 0;
     for (int i = 0; i < session->current_attempts; i++)
     {
@@ -887,7 +888,6 @@ void handle_message(int client_sock, Message *message)
         break;
       }
     }
-
     if (is_duplicate)
     {
       strcpy(message->payload, "Word already used!");
@@ -896,7 +896,7 @@ void handle_message(int client_sock, Message *message)
       return;
     }
 
-    // 4. KIỂM TRA LUẬT NỐI TỪ
+    // 5. Kiểm tra luật nối từ (Ký tự đầu trùng ký tự cuối)
     if (session->current_attempts > 0)
     {
       char required_char = session->last_word[WORD_LENGTH - 1];
@@ -912,29 +912,21 @@ void handle_message(int client_sock, Message *message)
     }
 
     // --- HỢP LỆ ---
-
-    // Cập nhật từ mới
     strcpy(session->last_word, guess);
-
-    // Reset đồng hồ tính giờ cho người tiếp theo
     session->last_move_time = time(NULL);
 
-    // Cộng điểm (Mỗi từ đúng +10 điểm)
     if (player_num == 1)
       session->player1_score += 10;
     else
       session->player2_score += 10;
 
-    // Đổi lượt
     session->current_player = (player_num == 1) ? 2 : 1;
 
-    // Lưu lịch sử
     strcpy(session->turns[session->current_attempts].player_name, player_name);
     strcpy(session->turns[session->current_attempts].guess, guess);
     strcpy(session->turns[session->current_attempts].result, "VALID");
     session->current_attempts++;
 
-    // Gửi phản hồi CONTINUE
     sprintf(message->payload, "CONTINUE|%d|%s|%d|%d",
             session->current_player, session->last_word,
             session->player1_score, session->player2_score);

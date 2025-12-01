@@ -338,7 +338,7 @@ void handle_game_start_response(Message *msg)
 {
   if (msg->status == SUCCESS)
   {
-    // Reset điểm hiển thị (nếu cần)
+    // Reset display score (if needed)
     GtkLabel *p1_lbl = GTK_LABEL(gtk_builder_get_object(builder, "player1_score_label"));
     if (p1_lbl)
       gtk_label_set_text(p1_lbl, "0");
@@ -350,25 +350,28 @@ void handle_game_start_response(Message *msg)
     printf("Game session %d started. You are P%d\n", game_session_id, player_num);
     is_in_game = 1;
 
-    // --- RESET UI CHO TRẬN MỚI ---
+    // --- RESET UI FOR NEW MATCH ---
     reset_game_ui_for_new_match();
 
-    // Chuyển màn hình
+    // Switch screen
+    // "game" is the ID of the child in the stack, keep as is
     gtk_stack_set_visible_child_name(GTK_STACK(stack), "game");
 
-    // --- CẤU HÌNH LƯỢT ĐẦU TIÊN ---
+    // --- CONFIGURE FIRST TURN ---
     if (player_num == 1)
     {
-      // Người đi đầu
-      gtk_label_set_text(timer_label, "Time: ∞ (Lượt đầu)");
+      // First player
+      // "Time: ∞ (Lượt đầu)" -> English
+      gtk_label_set_text(timer_label, "Time: ∞ (First turn)");
       gtk_widget_set_sensitive(GTK_WIDGET(word_entry), TRUE);
       gtk_widget_set_sensitive(GTK_WIDGET(submit_button), TRUE);
       gtk_widget_grab_focus(GTK_WIDGET(word_entry));
     }
     else
     {
-      // Người đi sau
-      gtk_label_set_text(timer_label, "Đợi đối thủ...");
+      // Second player / Waiting
+      // "Đợi đối thủ..." -> English
+      gtk_label_set_text(timer_label, "Waiting for opponent...");
       gtk_widget_set_sensitive(GTK_WIDGET(word_entry), FALSE);
       gtk_widget_set_sensitive(GTK_WIDGET(submit_button), FALSE);
     }
